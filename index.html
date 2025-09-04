@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Gestão Escolar</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    .hidden { display: none; }
+    .container { max-width: 600px; margin: auto; }
+    h2 { margin-top: 20px; }
+    input, select, button, textarea { display: block; margin: 8px 0; padding: 8px; width: 100%; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
+    th { background: #f0f0f0; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Gestão Escolar</h1>
+
+    <!-- Login -->
+    <div id="loginDiv">
+      <h2>Login</h2>
+      <input type="text" id="usuario" placeholder="Usuário">
+      <input type="password" id="senha" placeholder="Senha">
+      <button onclick="login()">Entrar</button>
+      <p id="loginMsg" style="color:red;"></p>
+    </div>
+
+    <!-- Painel Professor -->
+    <div id="professorDiv" class="hidden">
+      <h2>Painel do Professor</h2>
+      <label>Selecione a turma:</label>
+      <select id="turmaSelect" onchange="carregarAlunos()"></select>
+      <div id="alunosDiv"></div>
+      <button onclick="logout()">Sair</button>
+    </div>
+
+    <!-- Painel Pais -->
+    <div id="paiDiv" class="hidden">
+      <h2>Painel dos Pais</h2>
+      <p><b>Aluno:</b> <span id="paiNomeAluno"></span></p>
+      <p><b>Turma:</b> <span id="paiTurma"></span></p>
+      <h3>Histórico de Frequência</h3>
+      <table id="tabelaFrequencia">
+        <thead>
+          <tr><th>Data</th><th>Status</th><th>Observação</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <button onclick="logout()">Sair</button>
+    </div>
+  </div>
+
+  <script>
+    const API_URL = "https://script.google.com/macros/s/AKfycbzIHMSSWqDmjpIxbxtGfrtFDv_GPZu-nBowmiEva5SAcj4QCYB3maC4GruchqrEoj4f/exec";
+
+    let usuarioLogado = null;
+
+    async function login() {
+      const usuario = document.getElementById("usuario").value;
+      const senha = document.getElementById("senha").value;
+
+      // Tenta login do professor
+      let resp = await postData({ acao: "loginProfessor", usuario, senha });
+      if (resp.sucesso) {
+        usuarioLogado = { tipo: "professor" };
+        document.getElementById("loginDiv").classList.add("hidden");
+        document.getElementById("professorDiv").classList.remove("hidden");
+        carregarTurmas();
+        return;
+      }
+
+      // Tenta login do pai
+      resp = await postData({ acao: "loginPai", usuario, senha });
+      if (resp.sucesso) {
+        usuarioLogado = resp;
+        document.getElementById("loginDiv").classList.add("hidden");
+        document.getElementById("paiDiv").classList.remove("hidden");
+        document.getElementById("paiNomeAluno").textContent = resp.nomeAluno;
+        document.getElementById("paiTurma").textContent = resp.turma;
+        carregarHistorico(resp.idAluno);
+        return;
+      }
+
+      document.getElementById("loginMsg").textContent = "Login inválido!";
+    }
+
+    async function carregarTurmas() {
+      const turmas = await postData({ acao: "getTurmas" });
+      const select = document.getElementById("turmaSelect");
+      select.innerHTML = "<option value=''>Selecione</option>";
+      turmas.forEach(t => {
+        const opt = document.createElement("option");
+        opt.value = t;
+        opt.textContent = t;
+        select.appendChild(opt);
+      });
+    }
+
+    async function carregarAlunos() {
+      const turma = document.getElementById("turmaSelect").value;
+      if (!turma) return;
+      const alunos = await postData({ acao: "getAlunos", turma });
+      const div = document.getElementById("alunosDiv");
+      div.innerHTML = "";
+
+      alunos.forEach(aluno => {
+        const container = document.createElement("div");
+        container.style.border = "1px solid #ddd";
+        container.style.padding = "10px";
+        container.style.margin = "10px 0";
+
+        const label = document.createElement("label");
+        label.textContent = aluno.nome;
+
+        const select = document.createElement("select");
+        select.innerHTML = `
+          <option value="Presente">Presente</option>
+          <option value="Falta">Falta</option>
+          <option value="Atrasado">Atrasado</option>
+        `;
+
+        const obs = document.createElement("textarea");
+        obs.placeholder = "Observação";
+
+        const btn = document.createElement("button");
+        btn.textContent = "Salvar";
+        btn.onclick = async () => {
+          const dataHoje = new Date().toLocaleDateString("pt-BR");
+          await postData({
+            acao: "salvarPresenca",
+            idAluno: aluno.id,
+            data: dataHoje,
+            status: select.value,
+            observacao: obs.value
+          });
+          alert("Registro salvo para " + aluno.nome);
+        };
+
+        container.appendChild(label);
+        container.appendChild(select);
+        container.appendChild(obs);
+        container.appendChild(btn);
+
+        div.appendChild(container);
+      });
+    }
+
+    async function carregarHistorico(idAluno) {
+      const registros = await postData({ acao: "getFrequenciaAluno", idAluno });
+      const tbody = document.querySelector("#tabelaFrequencia tbody");
+      tbody.innerHTML = "";
+      registros.forEach(r => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td>${r.data}</td><td>${r.status}</td><td>${r.observacao}</td>`;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function logout() {
+      usuarioLogado = null;
+      document.getElementById("loginDiv").classList.remove("hidden");
+      document.getElementById("professorDiv").classList.add("hidden");
+      document.getElementById("paiDiv").classList.add("hidden");
+      document.getElementById("usuario").value = "";
+      document.getElementById("senha").value = "";
+    }
+
+    async function postData(data) {
+      const res = await fetch(API_URL, {
+        method: "POST",
+        body: JSON.stringify(data),
+        headers: { "Content-Type": "application/json" }
+      });
+      return res.json();
+    }
+  </script>
+</body>
+</html>
